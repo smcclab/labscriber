@@ -7,9 +7,6 @@ authors = [
 ]
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
-
-[project.urls]
-Repository = "https://github.com/smcclab/labscriber"
 dependencies = [
     "whisperx",
     "torch>=2.0",
@@ -21,6 +18,9 @@ dependencies = [
     "python-dotenv",
     "click>=8.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/smcclab/labscriber"
 
 [project.scripts]
 labscriber = "labscriber.cli:main"
