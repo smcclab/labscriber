@@ -195,130 +195,210 @@ def _get_audio_duration(wav_path: Path) -> float:
 
 def process(config: Config) -> None:
     """Run the full ingest → transcribe → diarize → merge → output pipeline."""
-    # ── Discover files ────────────────────────────────────────────────────────
-    audio_files = discover_audio_files(config.ingest_path)
-    if not audio_files:
-        print(f"No audio files found in {config.ingest_path}. Place files there and re-run.")
-        return
+    if config.verbose:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            handlers=[RichHandler(console=console, show_path=False)],
+        )
 
-    # ── Create working directories ────────────────────────────────────────────
-    wav_dir = config.work_path / "wav"
-    asr_dir = config.work_path / "asr"
-    diar_dir = config.work_path / "diarization"
-    for d in (wav_dir, asr_dir, diar_dir, config.output_path):
-        d.mkdir(parents=True, exist_ok=True)
+    display = _PipelineDisplay()
+    run_start = time.monotonic()
 
-    # ── Stage 1: Ingest (convert to WAV) ─────────────────────────────────────
-    print("Stage 1/4: Converting audio to WAV...")
-    for audio_path in tqdm(audio_files, unit="file"):
-        wav_path = wav_dir / (audio_path.stem + ".wav")
-        if wav_path.exists() and not config.force:
-            continue
-        try:
-            convert_to_wav(audio_path, wav_path)
-        except Exception as exc:
-            print(f"  [ERROR] Could not convert {audio_path.name}: {exc}")
+    with Live(display.render(), console=console, refresh_per_second=10) as live:
 
-    wav_files = sorted(wav_dir.glob("*.wav"))
-    if not wav_files:
-        print("No WAV files available after conversion. Check ffmpeg is installed.")
-        return
+        def _refresh() -> None:
+            live.update(display.render())
 
-    # ── Stage 2: Transcribe (ASR) ─────────────────────────────────────────────
-    print("Stage 2/4: Transcribing (ASR)...")
-    asr_model = None
-    for wav_path in tqdm(wav_files, unit="file"):
-        asr_path = asr_dir / (wav_path.stem + ".json")
-        if asr_path.exists() and not config.force:
-            continue
-        if asr_model is None:
-            print(f"  Loading WhisperX model '{config.model}'...")
-            asr_model = load_asr_model(config.model, config.device, config.compute_type, config.language)
-        try:
-            result = transcribe_file(asr_model, wav_path, config.language, config.device)
-            save_asr(result, asr_path)
-        except Exception as exc:
-            print(f"  [ERROR] Transcription failed for {wav_path.name}: {exc}")
-
-    # ── Stage 3: Diarize ──────────────────────────────────────────────────────
-    if not config.no_diarize:
-        if not config.hf_token:
-            print(
-                "\n[ERROR] HF_TOKEN not set. Diarization requires a HuggingFace token.\n"
-                "  Run: labscriber setup\n"
-                "  Or use: labscriber process --no-diarize"
+        # ── Discover files ────────────────────────────────────────────────────
+        audio_files = discover_audio_files(config.ingest_path)
+        if not audio_files:
+            console.print(
+                f"[yellow]No audio files found in {config.ingest_path}. "
+                "Place files there and re-run.[/yellow]"
             )
             return
-        print("Stage 3/4: Diarizing (speaker detection)...")
-        diarize_model = None
-        for wav_path in tqdm(wav_files, unit="file"):
-            diar_path = diar_dir / (wav_path.stem + ".json")
-            if diar_path.exists() and not config.force:
-                continue
-            if diarize_model is None:
-                print("  Loading diarization pipeline...")
-                diarize_model = load_diarize_model(config.hf_token, config.device)
+
+        wav_dir = config.work_path / "wav"
+        asr_dir = config.work_path / "asr"
+        diar_dir = config.work_path / "diarization"
+        for d in (wav_dir, asr_dir, diar_dir, config.output_path):
+            d.mkdir(parents=True, exist_ok=True)
+
+        # ── Stage 1: Ingest ───────────────────────────────────────────────────
+        display.start_stage(0, len(audio_files), float(len(audio_files)))
+        _refresh()
+
+        for audio_path in audio_files:
+            wav_path = wav_dir / (audio_path.stem + ".wav")
+            display.file_start(audio_path.name)
+            _refresh()
+            if not (wav_path.exists() and not config.force):
+                try:
+                    convert_to_wav(audio_path, wav_path)
+                except Exception as exc:
+                    display.add_error(f"Convert {audio_path.name}: {exc}")
+            display.file_done(audio_path.name, 1.0)
+            _refresh()
+
+        display.complete_stage(0)
+        _refresh()
+
+        wav_files = sorted(wav_dir.glob("*.wav"))
+        if not wav_files:
+            console.print(
+                "[red]No WAV files after conversion. Is ffmpeg installed?[/red]"
+            )
+            return
+
+        # Build audio duration map (used for ETA weighting in stages 2–4)
+        durations: dict[str, float] = {}
+        for wav_path in wav_files:
             try:
-                result = diarize_file(
-                    diarize_model, wav_path, config.min_speakers, config.max_speakers
+                durations[wav_path.stem] = _get_audio_duration(wav_path)
+            except Exception:
+                durations[wav_path.stem] = 0.0
+        total_audio = sum(durations.values())
+
+        # ── Stage 2: Transcribe ───────────────────────────────────────────────
+        display.start_stage(1, len(wav_files), total_audio)
+        _refresh()
+
+        asr_model = None
+        for wav_path in wav_files:
+            asr_path = asr_dir / (wav_path.stem + ".json")
+            if asr_path.exists() and not config.force:
+                display.file_done(wav_path.name, durations.get(wav_path.stem, 0.0))
+                _refresh()
+                continue
+            if asr_model is None:
+                display.file_start(f"{wav_path.name} (loading model...)")
+                _refresh()
+                asr_model = load_asr_model(
+                    config.model, config.device, config.compute_type, config.language
                 )
-                save_diarization(result, diar_path)
+            display.file_start(wav_path.name)
+            _refresh()
+            try:
+                result = transcribe_file(asr_model, wav_path, config.language, config.device)
+                save_asr(result, asr_path)
             except Exception as exc:
-                print(f"  [ERROR] Diarization failed for {wav_path.name}: {exc}")
-    else:
-        print("Stage 3/4: Diarization skipped (--no-diarize).")
+                display.add_error(f"ASR {wav_path.name}: {exc}")
+            display.file_done(wav_path.name, durations.get(wav_path.stem, 0.0))
+            _refresh()
 
-    # ── Stages 4+5: Merge and Output ──────────────────────────────────────────
-    print("Stage 4/4: Merging and writing transcripts...")
-    today = datetime.date.today().isoformat()
+        display.complete_stage(1)
+        _refresh()
 
-    for wav_path in tqdm(wav_files, unit="file"):
-        stem = wav_path.stem
-        md_path = config.output_path / (stem + ".md")
-        txt_path = config.output_path / (stem + ".txt")
+        # ── Stage 3: Diarize ──────────────────────────────────────────────────
+        if not config.no_diarize:
+            if not config.hf_token:
+                console.print(
+                    "[red][ERROR] HF_TOKEN not set. "
+                    "Run 'labscriber setup' or use --no-diarize.[/red]"
+                )
+                return
+            display.start_stage(2, len(wav_files), total_audio)
+            _refresh()
 
-        if md_path.exists() and txt_path.exists() and not config.force:
-            continue
+            diarize_model = None
+            for wav_path in wav_files:
+                diar_path = diar_dir / (wav_path.stem + ".json")
+                if diar_path.exists() and not config.force:
+                    display.file_done(wav_path.name, durations.get(wav_path.stem, 0.0))
+                    _refresh()
+                    continue
+                if diarize_model is None:
+                    display.file_start(f"{wav_path.name} (loading pipeline...)")
+                    _refresh()
+                    diarize_model = load_diarize_model(config.hf_token, config.device)
+                display.file_start(wav_path.name)
+                _refresh()
+                try:
+                    result = diarize_file(
+                        diarize_model, wav_path,
+                        config.min_speakers, config.max_speakers
+                    )
+                    save_diarization(result, diar_path)
+                except Exception as exc:
+                    display.add_error(f"Diarize {wav_path.name}: {exc}")
+                display.file_done(wav_path.name, durations.get(wav_path.stem, 0.0))
+                _refresh()
 
-        asr_path = asr_dir / (stem + ".json")
-        if not asr_path.exists():
-            print(f"  [SKIP] No ASR output for {stem}.")
-            continue
+            display.complete_stage(2)
+            _refresh()
+        else:
+            # Mark stage skipped so the stage panel shows it as complete
+            display.start_stage(2, 0, 1.0)
+            display.complete_stage(2)
+            _refresh()
 
-        try:
-            asr_data = load_asr(asr_path)
-            diar_path = diar_dir / (stem + ".json")
+        # ── Stage 4: Merge & Output ───────────────────────────────────────────
+        display.start_stage(3, len(wav_files), total_audio)
+        _refresh()
 
-            if config.no_diarize or not diar_path.exists():
-                if not config.no_diarize and not diar_path.exists():
-                    print(f"  [WARN] No diarization for {stem}; writing without speaker labels.")
-                utterances = _fallback_utterances(asr_data)
-            else:
-                diar_data = load_diarization(diar_path)
-                utterances = merge(asr_data, diar_data, config.merge_gap)
+        today = datetime.date.today().isoformat()
+        for wav_path in wav_files:
+            stem = wav_path.stem
+            md_path = config.output_path / (stem + ".md")
+            txt_path = config.output_path / (stem + ".txt")
 
-            # Apply speakers.txt sidecar substitutions
-            speaker_map = _load_speakers(stem, config.ingest_path)
-            if speaker_map:
-                utterances = [
-                    {**utt, "speaker": speaker_map.get(utt["speaker"], utt["speaker"])}
-                    for utt in utterances
-                ]
+            display.file_start(wav_path.name)
+            _refresh()
 
-            num_speakers = len({utt["speaker"] for utt in utterances})
-            duration = utterances[-1]["end"] if utterances else 0.0
-            meta = {
-                "title": stem,
-                "date": today,
-                "language": asr_data.get("language", "unknown"),
-                "num_speakers": num_speakers,
-                "duration": duration,
-            }
+            if md_path.exists() and txt_path.exists() and not config.force:
+                display.file_done(wav_path.name, durations.get(stem, 0.0))
+                _refresh()
+                continue
 
-            write_markdown(utterances, meta, md_path)
-            write_plaintext(utterances, meta, txt_path)
+            asr_path = asr_dir / (stem + ".json")
+            if not asr_path.exists():
+                display.add_error(f"No ASR output for {stem} — skipped.")
+                display.file_done(wav_path.name, durations.get(stem, 0.0))
+                _refresh()
+                continue
 
-        except Exception as exc:
-            print(f"  [ERROR] Output failed for {stem}: {exc}")
+            try:
+                asr_data = load_asr(asr_path)
+                diar_path = diar_dir / (stem + ".json")
 
-    print("Done.")
+                if config.no_diarize or not diar_path.exists():
+                    if not config.no_diarize and not diar_path.exists():
+                        display.add_error(
+                            f"No diarization for {stem}; writing without speaker labels."
+                        )
+                    utterances = _fallback_utterances(asr_data)
+                else:
+                    diar_data = load_diarization(diar_path)
+                    utterances = merge(asr_data, diar_data, config.merge_gap)
+
+                speaker_map = _load_speakers(stem, config.ingest_path)
+                if speaker_map:
+                    utterances = [
+                        {**utt, "speaker": speaker_map.get(utt["speaker"], utt["speaker"])}
+                        for utt in utterances
+                    ]
+
+                num_speakers = len({utt["speaker"] for utt in utterances})
+                duration = utterances[-1]["end"] if utterances else 0.0
+                meta = {
+                    "title": stem,
+                    "date": today,
+                    "language": asr_data.get("language", "unknown"),
+                    "num_speakers": num_speakers,
+                    "duration": duration,
+                }
+
+                write_markdown(utterances, meta, md_path)
+                write_plaintext(utterances, meta, txt_path)
+
+            except Exception as exc:
+                display.add_error(f"Output {stem}: {exc}")
+
+            display.file_done(wav_path.name, durations.get(stem, 0.0))
+            _refresh()
+
+        display.complete_stage(3)
+
+    # Live context closed — print static summary
+    total_elapsed = time.monotonic() - run_start
+    display.print_summary(len(wav_files), total_elapsed)
