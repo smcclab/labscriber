@@ -1,0 +1,29 @@
+[project]
+name = "labscriber"
+version = "0.1.0"
+description = "Local batch transcription for multi-speaker HCI research recordings"
+authors = [
+    {name = "Charles Martin", email = "cpm@charlesmartin.com.au"}
+]
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "whisperx",
+    "torch>=2.0",
+    "torchaudio>=2.0",
+    "pyannote.audio>=3.1",
+    "faster-whisper",
+    "ffmpeg-python",
+    "tqdm",
+    "python-dotenv",
+]
+
+[project.scripts]
+labscriber = "labscriber.cli:main"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
