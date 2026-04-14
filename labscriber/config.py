@@ -25,10 +25,9 @@ def detect_device() -> tuple[str, str]:
     """Return (device, compute_type) based on available hardware."""
     import torch
 
-    if torch.backends.mps.is_available():
-        return "mps", "float16"
-    elif torch.cuda.is_available():
+    if torch.cuda.is_available():
         return "cuda", "float16"
     else:
-        print("Notice: No GPU detected. Processing will be slow. Consider --model medium.")
+        # ctranslate2 (faster-whisper backend) does not support MPS; fall back to CPU.
+        print("Notice: No CUDA GPU detected. Processing will be slow. Consider --model medium.")
         return "cpu", "int8"
