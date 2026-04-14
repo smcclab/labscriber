@@ -1,8 +1,8 @@
 # labscriber/pipeline.py
 import datetime
+import time
+import wave
 from pathlib import Path
-
-from tqdm import tqdm
 
 from labscriber.config import Config
 from labscriber.diarize import (
@@ -51,6 +51,22 @@ def _fallback_utterances(asr_data: dict) -> list[dict]:
             }
         )
     return utterances
+
+
+def _get_audio_duration(wav_path: Path) -> float:
+    """Return duration in seconds of a WAV file."""
+    with wave.open(str(wav_path), "rb") as wf:
+        return wf.getnframes() / wf.getframerate()
+
+
+def _fmt_duration(seconds: float) -> str:
+    """Format seconds as m:ss or h:mm:ss."""
+    total = int(seconds)
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
 
 
 def process(config: Config) -> None:
