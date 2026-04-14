@@ -16,6 +16,7 @@ dependencies = [
     "ffmpeg-python",
     "tqdm",
     "python-dotenv",
+    "click>=8.0",
 ]
 
 [project.scripts]
