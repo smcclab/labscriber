@@ -4,6 +4,8 @@ import time
 import wave
 from pathlib import Path
 
+from tqdm import tqdm
+
 from labscriber.config import Config
 from labscriber.diarize import (
     diarize_file,
