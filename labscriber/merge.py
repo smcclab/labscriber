@@ -20,6 +20,7 @@ def merge(
     words: list[dict] = []
     for seg in asr_data.get("segments", []):
         for word in seg.get("words", []):
+            # Skip words that WhisperX emitted without timestamps (low-confidence words)
             if "start" in word and "end" in word:
                 words.append(dict(word))
 
@@ -39,7 +40,7 @@ def merge(
                 best_overlap = overlap
                 best_speaker = seg["speaker"]
 
-        if best_speaker is None or best_overlap <= 0.0:
+        if best_speaker is None or best_overlap < 0.0:
             # No overlap — fall back to nearest segment by midpoint distance
             word_mid = (word["start"] + word["end"]) / 2.0
             if diar_segs:
@@ -73,7 +74,8 @@ def merge(
                 }
             )
 
-    # Stage 3: merge adjacent same-speaker utterances within merge_gap
+    # Stage 3: Defensive merge of adjacent same-speaker utterances within merge_gap
+    # (e.g., utterances created by future algorithm changes that may emit adjacent segments)
     merged: list[dict] = []
     for utt in utterances:
         if (
