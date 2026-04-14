@@ -93,7 +93,7 @@ def process(config: Config) -> None:
             continue
         if asr_model is None:
             print(f"  Loading WhisperX model '{config.model}'...")
-            asr_model = load_asr_model(config.model, config.device, config.compute_type)
+            asr_model = load_asr_model(config.model, config.device, config.compute_type, config.language)
         try:
             result = transcribe_file(asr_model, wav_path, config.language, config.device)
             save_asr(result, asr_path)

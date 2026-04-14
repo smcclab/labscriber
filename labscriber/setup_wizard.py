@@ -8,9 +8,9 @@ def validate_token(hf_token: str) -> bool:
     Returns True if token is valid and model terms have been accepted.
     """
     try:
-        import whisperx
+        from whisperx.diarize import DiarizationPipeline
         # Use CPU for validation to avoid GPU setup overhead
-        whisperx.DiarizationPipeline(use_auth_token=hf_token, device="cpu")
+        DiarizationPipeline(token=hf_token, device="cpu")
         return True
     except Exception as exc:
         error = str(exc).lower()

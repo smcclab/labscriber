@@ -20,7 +20,8 @@ def download_all(whisper_model: str, hf_token: str) -> None:
     print("  ✓ Alignment model ready.")
 
     print("Downloading pyannote diarization pipeline (requires HF_TOKEN)...")
-    whisperx.DiarizationPipeline(use_auth_token=hf_token, device=device)
+    from whisperx.diarize import DiarizationPipeline
+    DiarizationPipeline(token=hf_token, device=device)
     print("  ✓ Diarization pipeline ready.")
 
     print("\nAll models downloaded. You're ready to run: labscriber process")

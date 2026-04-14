@@ -2,10 +2,10 @@ import json
 from pathlib import Path
 
 
-def load_asr_model(model_name: str, device: str, compute_type: str):
+def load_asr_model(model_name: str, device: str, compute_type: str, language: str | None = None):
     """Load and return a WhisperX ASR model. Call once, reuse across files."""
     import whisperx
-    return whisperx.load_model(model_name, device, compute_type=compute_type)
+    return whisperx.load_model(model_name, device, compute_type=compute_type, language=language)
 
 
 def transcribe_file(model, wav_path: Path, language: str | None, device: str) -> dict:

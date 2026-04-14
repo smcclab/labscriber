@@ -4,8 +4,8 @@ from pathlib import Path
 
 def load_diarize_model(hf_token: str, device: str):
     """Load pyannote diarization pipeline via WhisperX. Call once, reuse across files."""
-    import whisperx
-    return whisperx.DiarizationPipeline(use_auth_token=hf_token, device=device)
+    from whisperx.diarize import DiarizationPipeline
+    return DiarizationPipeline(token=hf_token, device=device)
 
 
 def diarize_file(
