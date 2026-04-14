@@ -1,10 +1,24 @@
 # labscriber/pipeline.py
 import datetime
+import logging
 import time
 import wave
 from pathlib import Path
 
-from tqdm import tqdm
+from rich.console import Console, Group
+from rich.live import Live
+from rich.logging import RichHandler
+from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
+from rich.text import Text
 
 from labscriber.config import Config
 from labscriber.diarize import (
@@ -22,6 +36,113 @@ from labscriber.transcribe import (
     save_asr,
     transcribe_file,
 )
+
+console = Console()
+
+_STAGE_NAMES = [
+    "Ingest (convert to WAV)",
+    "Transcribe (ASR)",
+    "Diarize (speaker detection)",
+    "Merge & write transcripts",
+]
+
+
+def _make_progress() -> Progress:
+    return Progress(
+        SpinnerColumn(),
+        TextColumn("[bold]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    )
+
+
+class _PipelineDisplay:
+    """Manages the rich live display for the pipeline."""
+
+    def __init__(self) -> None:
+        self._stage_idx: int = -1
+        self._stage_elapsed: list[float | None] = [None, None, None, None]
+        self._stage_start: float = 0.0
+        self.progress: Progress = _make_progress()
+        self._task_id: int | None = None
+        self._file_n: int = 0
+        self._file_total: int = 0
+        self._errors: list[str] = []
+
+    def _stage_text(self) -> Text:
+        text = Text()
+        for i, name in enumerate(_STAGE_NAMES):
+            if i < self._stage_idx:
+                elapsed = self._stage_elapsed[i]
+                suffix = f"  ({_fmt_duration(elapsed)})" if elapsed is not None else ""
+                text.append(f"  ✓  Stage {i + 1}/4: {name}{suffix}\n", style="green")
+            elif i == self._stage_idx:
+                text.append(f"  ⟳  Stage {i + 1}/4: {name}\n", style="bold yellow")
+            else:
+                text.append(f"  ·  Stage {i + 1}/4: {name}\n", style="dim")
+        return text
+
+    def render(self) -> Group:
+        return Group(
+            Panel(self._stage_text(), title="[bold]labscriber[/bold]", expand=False),
+            self.progress,
+        )
+
+    def start_stage(self, idx: int, n_files: int, total_audio: float) -> None:
+        self._stage_idx = idx
+        self._stage_start = time.monotonic()
+        self._file_n = 0
+        self._file_total = n_files
+        if self._task_id is not None:
+            self.progress.remove_task(self._task_id)
+        self._task_id = self.progress.add_task(
+            f"[0/{n_files}] Starting...",
+            total=max(total_audio, 1.0),
+        )
+
+    def file_start(self, filename: str) -> None:
+        if self._task_id is not None:
+            self.progress.update(
+                self._task_id,
+                description=f"[{self._file_n}/{self._file_total}] {filename}",
+            )
+
+    def file_done(self, filename: str, audio_duration: float) -> None:
+        self._file_n += 1
+        if self._task_id is not None:
+            self.progress.advance(self._task_id, audio_duration)
+            self.progress.update(
+                self._task_id,
+                description=f"[{self._file_n}/{self._file_total}] {filename} ✓",
+            )
+
+    def complete_stage(self, idx: int) -> None:
+        self._stage_elapsed[idx] = time.monotonic() - self._stage_start
+        if self._task_id is not None:
+            self.progress.remove_task(self._task_id)
+            self._task_id = None
+
+    def add_error(self, message: str) -> None:
+        self._errors.append(message)
+
+    def print_summary(self, n_files: int, total_elapsed: float) -> None:
+        lines = Text()
+        lines.append(f"  Files processed : {n_files}\n")
+        lines.append(f"  Total time      : {_fmt_duration(total_elapsed)}\n")
+        if not self._errors:
+            lines.append("  Errors          : 0\n", style="green")
+        else:
+            lines.append(f"  Errors          : {len(self._errors)}\n", style="red")
+        console.print(
+            Panel(lines, title="[bold green]labscriber — done[/bold green]", expand=False)
+        )
+        if self._errors:
+            console.print("\n[red]Errors:[/red]")
+            for err in self._errors:
+                console.print(f"  [red]•[/red] {err}")
 
 
 def _load_speakers(stem: str, ingest_path: Path) -> dict[str, str]:
