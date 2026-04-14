@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+dist/
+*.egg-info/
+
+# Poetry
+.venv/
+
+# labscriber runtime directories
+ingest/
+work/
+output/
+
+# Secrets
+.env
