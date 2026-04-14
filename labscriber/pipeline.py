@@ -13,6 +13,7 @@ from rich.progress import (
     BarColumn,
     Progress,
     SpinnerColumn,
+    TaskID,
     TaskProgressColumn,
     TextColumn,
     TimeElapsedColumn,
@@ -59,6 +60,16 @@ def _make_progress() -> Progress:
     )
 
 
+def _fmt_duration(seconds: float) -> str:
+    """Format seconds as m:ss or h:mm:ss."""
+    total = int(seconds)
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
+
+
 class _PipelineDisplay:
     """Manages the rich live display for the pipeline."""
 
@@ -67,7 +78,7 @@ class _PipelineDisplay:
         self._stage_elapsed: list[float | None] = [None, None, None, None]
         self._stage_start: float = 0.0
         self.progress: Progress = _make_progress()
-        self._task_id: int | None = None
+        self._task_id: TaskID | None = None
         self._file_n: int = 0
         self._file_total: int = 0
         self._errors: list[str] = []
@@ -78,11 +89,11 @@ class _PipelineDisplay:
             if i < self._stage_idx:
                 elapsed = self._stage_elapsed[i]
                 suffix = f"  ({_fmt_duration(elapsed)})" if elapsed is not None else ""
-                text.append(f"  ✓  Stage {i + 1}/4: {name}{suffix}\n", style="green")
+                text.append(f"  ✓  Stage {i + 1}/{len(_STAGE_NAMES)}: {name}{suffix}\n", style="green")
             elif i == self._stage_idx:
-                text.append(f"  ⟳  Stage {i + 1}/4: {name}\n", style="bold yellow")
+                text.append(f"  ⟳  Stage {i + 1}/{len(_STAGE_NAMES)}: {name}\n", style="bold yellow")
             else:
-                text.append(f"  ·  Stage {i + 1}/4: {name}\n", style="dim")
+                text.append(f"  ·  Stage {i + 1}/{len(_STAGE_NAMES)}: {name}\n", style="dim")
         return text
 
     def render(self) -> Group:
@@ -180,16 +191,6 @@ def _get_audio_duration(wav_path: Path) -> float:
     """Return duration in seconds of a WAV file."""
     with wave.open(str(wav_path), "rb") as wf:
         return wf.getnframes() / wf.getframerate()
-
-
-def _fmt_duration(seconds: float) -> str:
-    """Format seconds as m:ss or h:mm:ss."""
-    total = int(seconds)
-    h, rem = divmod(total, 3600)
-    m, s = divmod(rem, 60)
-    if h:
-        return f"{h}:{m:02d}:{s:02d}"
-    return f"{m}:{s:02d}"
 
 
 def process(config: Config) -> None:
