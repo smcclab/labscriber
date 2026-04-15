@@ -29,5 +29,6 @@ def detect_device() -> tuple[str, str]:
         return "cuda", "float16"
     else:
         # ctranslate2 (faster-whisper backend) does not support MPS; fall back to CPU.
-        print("Notice: No CUDA GPU detected. Processing will be slow. Consider --model medium.")
+        import click
+        click.echo("Notice: No CUDA GPU detected. Processing will be slow. Consider --model medium.")
         return "cpu", "int8"
